@@ -63,8 +63,9 @@ jobs:
         run: |
           # 进入trunk目录
           cd trunk
-          # 强制给编译脚本和清理脚本添加可执行权限
+          # 给所有编译相关脚本添加可执行权限（包括依赖的build_firmware_modify）
           chmod +x build_firmware_ci
+          chmod +x build_firmware_modify
           chmod +x clear_tree_simple
           # 创建固件存储目录
           mkdir -p ${images_dir}
@@ -83,7 +84,6 @@ jobs:
             # 清理编译环境
             ./clear_tree_simple >/dev/null 2>&1
           done
-
       # 步骤7：打包固件
       - name: Create archive
         if: ${{ github.event_name != 'release' && success() }}
