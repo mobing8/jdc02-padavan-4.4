@@ -61,11 +61,28 @@ jobs:
       # 步骤6：开始编译固件（会自动读取你的JDCLOUD-RE-CP-02.config配置）
       - name: Start build
         run: |
+          # 进入trunk目录
           cd trunk
+          # 强制给编译脚本和清理脚本添加可执行权限
+          chmod +x build_firmware_ci
+          chmod +x clear_tree_simple
+          # 创建固件存储目录
           mkdir -p ${images_dir}
-          for m in $targets; do fakeroot ./build_firmware_ci $m; \
-          if [ $? = 0 ]; then cp -f images/*.trx ${images_dir}/$m.trx; else exit 1; fi; \
-          ./clear_tree_simple >/dev/null 2>&1; done
+          # 循环编译目标设备
+          for m in $targets; do 
+            # 执行编译脚本（带fakeroot模拟root权限）
+            fakeroot ./build_firmware_ci $m
+            # 检查编译是否成功
+            if [ $? = 0 ]; then 
+              # 编译成功则复制固件到存储目录
+              cp -f images/*.trx ${images_dir}/$m.trx
+            else 
+              # 编译失败则退出
+              exit 1
+            fi
+            # 清理编译环境
+            ./clear_tree_simple >/dev/null 2>&1
+          done
 
       # 步骤7：打包固件
       - name: Create archive
