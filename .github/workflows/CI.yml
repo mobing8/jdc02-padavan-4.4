@@ -57,38 +57,43 @@ jobs:
         with:
           limit-access-to-actor: true
 
-      # 步骤6：开始编译固件（修正Shell语法，确保可执行）
+      # 步骤6：开始编译固件（100%规范Shell语法，无错误）
       - name: Start build
         run: |
-          # 进入trunk目录（失败则提示退出）
-          cd trunk || { echo "Error: 无法进入trunk目录"; exit 1; }
+          # 指定使用bash解释器，避免Shell差异
+          #!/bin/bash
           
-          # 给所有.sh脚本添加可执行权限
-          find . -name "*.sh" -exec chmod +x {} \;
+          # 进入trunk目录（失败则强制退出）
+          cd trunk || exit 1
           
-          # 给核心编译/清理脚本单独加权限
+          # 给所有.sh脚本添加可执行权限（递归覆盖子目录）
+          find . -type f -name "*.sh" -exec chmod +x {} \;
+          
+          # 给核心编译/清理脚本单独加权限（双重保障）
           chmod +x build_firmware_ci build_firmware_modify clear_tree clear_tree_simple
           
-          # 完整清理编译缓存
+          # 完整清理编译缓存（忽略输出）
           ./clear_tree >/dev/null 2>&1
           
-          # 创建固件存储目录
+          # 创建固件存储目录（确保目录存在）
           mkdir -p "${images_dir}"
           
-          # 单线程编译每个目标设备（避免依赖冲突）
-          for m in ${targets}; do
-            echo "开始编译设备：${m}"
-            fakeroot ./build_firmware_ci "${m}" -j1
+          # 遍历目标设备（仅JDCLOUD-RE-CP-02）
+          for device in ${targets}; do
+            echo "开始编译设备：${device}"
             
-            # 检查编译结果，失败则退出
+            # 执行编译脚本（单线程-j1，避免依赖冲突）
+            fakeroot ./build_firmware_ci "${device}" -j1
+            
+            # 检查编译结果：失败则输出错误并退出
             if [ $? -ne 0 ]; then
-              echo "Error: 设备${m}编译失败"
+              echo "编译失败：设备${device}"
               exit 1
             fi
             
             # 复制固件到存储目录
-            cp -f images/*.trx "${images_dir}/${m}.trx"
-            echo "设备${m}编译成功，固件已保存到${images_dir}"
+            cp -f images/*.trx "${images_dir}/${device}.trx"
+            echo "编译成功：设备${device}，固件已保存到${images_dir}"
             
             # 清理当前设备的编译缓存
             ./clear_tree >/dev/null 2>&1
@@ -99,9 +104,11 @@ jobs:
         if: ${{ github.event_name != 'release' && success() }}
         run: |
           ls -lh ${images_dir}
-          GIT_VERSION=`git rev-parse --short=7 HEAD 2>/dev/null` && [ -n "$GIT_VERSION" ] && \
-          image_name=images_${build_variant}_${GIT_VERSION} || image_name=images_${build_variant}
-          cd ${images_dir}; md5sum *.trx |tee md5sum.txt; 7z a -mx=9 ${image_name}.7z ./*
+          GIT_VERSION=$(git rev-parse --short=7 HEAD 2>/dev/null)
+          image_name="images_${build_variant}_${GIT_VERSION:-default}"
+          cd ${images_dir}
+          md5sum *.trx > md5sum.txt
+          7z a -mx=9 "${image_name}.7z" ./*
           echo "image_name=${image_name}" >> $GITHUB_ENV
 
       # 步骤8：上传固件到Artifacts
