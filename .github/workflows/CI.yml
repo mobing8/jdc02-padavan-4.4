@@ -63,7 +63,9 @@ jobs:
         run: |
           # 进入trunk目录
           cd trunk
-          # 给所有编译相关脚本添加可执行权限（包括依赖的build_firmware_modify）
+          # 批量给trunk下所有.sh脚本添加可执行权限（包括子目录里的工具脚本）
+          find . -name "*.sh" -exec chmod +x {} \;
+          # 额外给编译相关的ci脚本加权限
           chmod +x build_firmware_ci
           chmod +x build_firmware_modify
           chmod +x clear_tree_simple
