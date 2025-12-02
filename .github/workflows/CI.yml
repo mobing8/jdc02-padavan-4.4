@@ -1,21 +1,23 @@
 name: CI
 
+# Controls when the action will run. 
 on: 
   push:
   pull_request:
   workflow_dispatch:
     inputs:
       debug_enabled:
-        description: 'Run the build with tmate debugging enabled'     
+        description: 'Run the build with tmate debugging enabled (https://github.com/marketplace/actions/debugging-with-tmate)'     
         required: false
         default: 'no'
   release:
     types: [published]
 
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   build:
     name: build
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
     env:
       build_variant: ${{ matrix.build_variant }}
@@ -24,69 +26,66 @@ jobs:
     strategy:
       matrix:
         include:
+          # 仅保留京东云鲁班（JDCLOUD-RE-CP-02），删除其他无关设备，避免多余编译
           - build_variant: "mt7621-usb-1"
-            targets: "JDCLOUD-RE-CP-02"  # 仅编译京东云鲁班      
+            targets: "JDCLOUD-RE-CP-02"
     steps:
-      # 步骤1：拉取主仓库代码（不需要子模块，正确配置）
+      # 升级checkout到v4，拉取当前仓库代码（无需指定外部仓库）
       - uses: actions/checkout@v4
         with:
-          #repository: mobing8/JDC02-padavan-4.4
-          #ref: main
           fetch-depth: 1
           persist-credentials: false
 
-      # 步骤2：安装编译依赖
+      # 补充MIPS小端交叉编译依赖，解决汇编文件编译问题
       - name: Prepare environment
         run: |
           sudo apt update
-          sudo apt install -y libtool-bin gperf python3-docutils autopoint gettext
+          sudo apt install -y libtool-bin gperf python3-docutils autopoint gettext \
+          libc6-dev-mipsel-cross gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu
 
-      # 步骤3：运行代码检查
+      # 运行代码检查（保留原逻辑）
       - name: Run shellcheck
         run: sh ./trunk/tools/shellcheck.sh
 
-      # 步骤4：准备编译工具链
+      # 准备编译工具链（保留原逻辑）
       - name: Prepare toolchain
         run: |
           cd toolchain-mipsel
           sh dl_toolchain.sh
 
-      # 步骤5：调试会话（保留原逻辑）
+      # 调试会话（保留原逻辑）
       - name: Setup tmate session
         uses: mxschmitt/action-tmate@v3
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.debug_enabled == 'yes' }}
         with:
           limit-access-to-actor: true
 
-      # 步骤6：开始编译固件（会自动读取你的JDCLOUD-RE-CP-02.config配置）
+      # 核心编译步骤：加权限+完整清理缓存+单线程编译
       - name: Start build
         run: |
-          # 进入trunk目录
           cd trunk
-          # 批量给trunk下所有.sh脚本添加可执行权限（包括子目录里的工具脚本）
+          # 批量给所有.sh脚本加可执行权限（包括子目录工具脚本）
           find . -name "*.sh" -exec chmod +x {} \;
-          # 额外给编译相关的ci脚本加权限
-          chmod +x build_firmware_ci
-          chmod +x build_firmware_modify
-          chmod +x clear_tree_simple
+          # 给编译/清理脚本单独加权限（双重保障）
+          chmod +x build_firmware_ci build_firmware_modify clear_tree clear_tree_simple
+          # 完整清理编译缓存，避免残留冲突
+          ./clear_tree >/dev/null 2>&1
           # 创建固件存储目录
           mkdir -p ${images_dir}
-          # 循环编译目标设备
+          # 单线程编译（-j1），确保依赖顺序正确，解决"无规则生成目标"问题
           for m in $targets; do 
-            # 执行编译脚本（带fakeroot模拟root权限）
-            fakeroot ./build_firmware_ci $m
-            # 检查编译是否成功
+            fakeroot ./build_firmware_ci $m -j1
+            # 检查编译是否成功，失败则退出
             if [ $? = 0 ]; then 
-              # 编译成功则复制固件到存储目录
               cp -f images/*.trx ${images_dir}/$m.trx
             else 
-              # 编译失败则退出
               exit 1
             fi
-            # 清理编译环境
-            ./clear_tree_simple >/dev/null 2>&1
+            # 编译完成后再次清理缓存
+            ./clear_tree >/dev/null 2>&1
           done
-      # 步骤7：打包固件
+
+      # 打包固件（保留原逻辑）
       - name: Create archive
         if: ${{ github.event_name != 'release' && success() }}
         run: |
@@ -96,7 +95,7 @@ jobs:
           cd ${images_dir}; md5sum *.trx |tee md5sum.txt; 7z a -mx=9 ${image_name}.7z ./*
           echo "image_name=${image_name}" >> $GITHUB_ENV
 
-      # 步骤8：上传固件到Artifacts
+      # 升级Artifact上传到v4，保留30天（避免占用仓库空间）
       - name: Upload images to Artifact
         if: ${{ github.event_name != 'release' && success() }}
         uses: actions/upload-artifact@v4
@@ -105,10 +104,10 @@ jobs:
           path: ${{ env.images_dir }}/*.7z
           retention-days: 30
 
-      # 步骤9：上传固件到Releases
+      # 上传固件到Releases（保留原逻辑，升级插件版本）
       - name: Upload images to Releases
         if: ${{ github.event_name == 'release' && success() }}
-        uses: svenstaro/upload-release-action@v2
+        uses: svenstaro/upload-release-action@v2.2.0
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: ${{ env.images_dir }}/*.trx
