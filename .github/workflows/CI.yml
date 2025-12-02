@@ -27,15 +27,13 @@ jobs:
           - build_variant: "mt7621-usb-1"
             targets: "JDCLOUD-RE-CP-02"  # 仅编译京东云鲁班      
     steps:
-      # 步骤1：拉取主仓库代码（不需要子模块，正确配置）
+      # 步骤1：拉取主仓库代码
       - uses: actions/checkout@v4
         with:
-          #repository: mobing8/JDC02-padavan-4.4
-          #ref: main
           fetch-depth: 1
           persist-credentials: false
 
-      # 步骤2：安装编译依赖（补充MIPS小端交叉编译工具，解决汇编文件编译问题）
+      # 步骤2：安装编译依赖（补充MIPS小端交叉工具）
       - name: Prepare environment
         run: |
           sudo apt update
@@ -52,47 +50,47 @@ jobs:
           cd toolchain-mipsel
           sh dl_toolchain.sh
 
-      # 步骤5：调试会话（保留原逻辑）
+      # 步骤5：调试会话
       - name: Setup tmate session
         uses: mxschmitt/action-tmate@v3
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.debug_enabled == 'yes' }}
         with:
           limit-access-to-actor: true
 
-      # 步骤6：开始编译固件（核心修复：完整清理缓存+单线程编译+权限保障）
+      # 步骤6：开始编译固件（修正Shell语法，确保可执行）
       - name: Start build
         run: |
-          # 进入trunk目录，失败则提示并退出
-          cd trunk || { echo "Error: 未找到trunk目录，源码克隆不完整"; exit 1; }
+          # 进入trunk目录（失败则提示退出）
+          cd trunk || { echo "Error: 无法进入trunk目录"; exit 1; }
           
-          # 批量给trunk下所有.sh脚本添加可执行权限（覆盖子目录工具脚本）
+          # 给所有.sh脚本添加可执行权限
           find . -name "*.sh" -exec chmod +x {} \;
           
-          # 给编译/清理核心脚本单独加权限（双重保障，避免权限遗漏）
+          # 给核心编译/清理脚本单独加权限
           chmod +x build_firmware_ci build_firmware_modify clear_tree clear_tree_simple
           
-          # 完整清理编译缓存（删除所有临时文件、错误缓存，避免残留冲突）
+          # 完整清理编译缓存
           ./clear_tree >/dev/null 2>&1
           
-          # 创建固件存储目录（确保目录存在，避免复制失败）
-          mkdir -p ${images_dir}
+          # 创建固件存储目录
+          mkdir -p "${images_dir}"
           
-          # 单线程编译（-j1），确保依赖顺序正确，解决"无规则生成目标"问题
-          for m in $targets; do 
-            echo "开始编译设备：$m"
-            fakeroot ./build_firmware_ci $m -j1
+          # 单线程编译每个目标设备（避免依赖冲突）
+          for m in ${targets}; do
+            echo "开始编译设备：${m}"
+            fakeroot ./build_firmware_ci "${m}" -j1
             
-            # 检查编译是否成功，失败则退出并提示
+            # 检查编译结果，失败则退出
             if [ $? -ne 0 ]; then
-              echo "Error: 设备$m编译失败"
+              echo "Error: 设备${m}编译失败"
               exit 1
             fi
             
-            # 编译成功，复制固件到存储目录
-            cp -f images/*.trx ${images_dir}/${m}.trx
-            echo "设备$m编译成功，固件已复制到${images_dir}"
+            # 复制固件到存储目录
+            cp -f images/*.trx "${images_dir}/${m}.trx"
+            echo "设备${m}编译成功，固件已保存到${images_dir}"
             
-            # 再次完整清理缓存，避免影响后续编译（此处仅单设备，仍保留规范）
+            # 清理当前设备的编译缓存
             ./clear_tree >/dev/null 2>&1
           done
 
