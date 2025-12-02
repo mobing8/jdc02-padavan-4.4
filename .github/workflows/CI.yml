@@ -30,8 +30,8 @@ jobs:
       # 步骤1：拉取主仓库代码（不需要子模块，正确配置）
       - uses: actions/checkout@v4
         with:
-          repository: mobing8/JDC02-padavan-4.4
-          ref: main
+          #repository: mobing8/JDC02-padavan-4.4
+          #ref: main
           fetch-depth: 1
           persist-credentials: false
 
