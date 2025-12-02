@@ -1,19 +1,17 @@
 name: CI
 
-# Controls when the action will run. 
 on: 
   push:
   pull_request:
   workflow_dispatch:
     inputs:
       debug_enabled:
-        description: 'Run the build with tmate debugging enabled (https://github.com/marketplace/actions/debugging-with-tmate)'     
+        description: 'Run the build with tmate debugging enabled'     
         required: false
         default: 'no'
   release:
     types: [published]
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   build:
     name: build
@@ -26,37 +24,41 @@ jobs:
     strategy:
       matrix:
         include:
-          # 注释掉无关变体，仅保留需要的 mt7621-usb-1（避免重复编译）
-          #- build_variant: "mt7621"
-          #  targets: "K2P_nano K2P DIR-878 CR660x JCG-Q20 JDCLOUD-RE-CP-02"
           - build_variant: "mt7621-usb-1"
-            targets: "JDCLOUD-RE-CP-02"  # 仅编译京东云鲁班，无多余型号
-            #targets: "XY-C1 JCG-836PRO JCG-Y2"
-          # 注释掉重复的 mt7621-usb-2（避免同一型号编译两次）
-          #- build_variant: "mt7621-usb-2"
-          #  targets: "JDCLOUD-RE-CP-02"
-          #targets: "DIR-882 JCG-AC860M NETGEAR-BZV MI-R3P"
+            targets: "JDCLOUD-RE-CP-02"  # 仅编译京东云鲁班      
     steps:
-      - uses: actions/checkout@v4  # 升级到稳定新版，提升兼容性（原 v2 无报错但推荐更新）
+      # 步骤1：拉取主仓库代码（不需要子模块，正确配置）
+      - uses: actions/checkout@v4
         with:
           repository: mobing8/JDC02-padavan-4.4
           ref: main
           fetch-depth: 1
+          persist-credentials: false
+
+      # 步骤2：安装编译依赖
       - name: Prepare environment
         run: |
           sudo apt update
-          sudo apt install -y libtool-bin gperf python3-docutils autopoint gettext  # 加 -y 自动确认，避免交互卡壳
+          sudo apt install -y libtool-bin gperf python3-docutils autopoint gettext
+
+      # 步骤3：运行代码检查
       - name: Run shellcheck
         run: sh ./trunk/tools/shellcheck.sh
+
+      # 步骤4：准备编译工具链
       - name: Prepare toolchain
         run: |
           cd toolchain-mipsel
           sh dl_toolchain.sh
+
+      # 步骤5：调试会话（保留原逻辑）
       - name: Setup tmate session
         uses: mxschmitt/action-tmate@v3
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.debug_enabled == 'yes' }}
         with:
           limit-access-to-actor: true
+
+      # 步骤6：开始编译固件（会自动读取你的JDCLOUD-RE-CP-02.config配置）
       - name: Start build
         run: |
           cd trunk
@@ -64,6 +66,8 @@ jobs:
           for m in $targets; do fakeroot ./build_firmware_ci $m; \
           if [ $? = 0 ]; then cp -f images/*.trx ${images_dir}/$m.trx; else exit 1; fi; \
           ./clear_tree_simple >/dev/null 2>&1; done
+
+      # 步骤7：打包固件
       - name: Create archive
         if: ${{ github.event_name != 'release' && success() }}
         run: |
@@ -72,16 +76,20 @@ jobs:
           image_name=images_${build_variant}_${GIT_VERSION} || image_name=images_${build_variant}
           cd ${images_dir}; md5sum *.trx |tee md5sum.txt; 7z a -mx=9 ${image_name}.7z ./*
           echo "image_name=${image_name}" >> $GITHUB_ENV
+
+      # 步骤8：上传固件到Artifacts
       - name: Upload images to Artifact
         if: ${{ github.event_name != 'release' && success() }}
-        uses: actions/upload-artifact@v4  # 核心修复：升级到 GitHub 支持的稳定新版（原 v2.2.1 已废弃）
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ env.image_name }}
           path: ${{ env.images_dir }}/*.7z
-          retention-days: 30  # 新增： artifacts 保留 30 天（可选，避免占用仓库空间）
+          retention-days: 30
+
+      # 步骤9：上传固件到Releases
       - name: Upload images to Releases
         if: ${{ github.event_name == 'release' && success() }}
-        uses: svenstaro/upload-release-action@v2  # 升级为当前支持的版本
+        uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: ${{ env.images_dir }}/*.trx
