@@ -81,7 +81,7 @@ jobs:
           retention-days: 30  # 新增： artifacts 保留 30 天（可选，避免占用仓库空间）
       - name: Upload images to Releases
         if: ${{ github.event_name == 'release' && success() }}
-        uses: svenstaro/upload-release-action@v2.2.0
+        uses: svenstaro/upload-release-action@v2  # 升级为当前支持的版本
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: ${{ env.images_dir }}/*.trx
