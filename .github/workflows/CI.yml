@@ -59,32 +59,40 @@ jobs:
         with:
           limit-access-to-actor: true
 
-      # 步骤6：开始编译固件（核心修复：完整清理缓存+单线程编译）
+      # 步骤6：开始编译固件（核心修复：完整清理缓存+单线程编译+权限保障）
       - name: Start build
         run: |
-          # 进入trunk目录
-          cd trunk
-          # 批量给trunk下所有.sh脚本添加可执行权限（包括子目录里的工具脚本）
+          # 进入trunk目录，失败则提示并退出
+          cd trunk || { echo "Error: 未找到trunk目录，源码克隆不完整"; exit 1; }
+          
+          # 批量给trunk下所有.sh脚本添加可执行权限（覆盖子目录工具脚本）
           find . -name "*.sh" -exec chmod +x {} \;
-          # 额外给编译相关的ci脚本加权限（双重保障）
+          
+          # 给编译/清理核心脚本单独加权限（双重保障，避免权限遗漏）
           chmod +x build_firmware_ci build_firmware_modify clear_tree clear_tree_simple
-          # 🔥 核心修复1：完整清理编译缓存（替换clear_tree_simple，删除所有残留）
+          
+          # 完整清理编译缓存（删除所有临时文件、错误缓存，避免残留冲突）
           ./clear_tree >/dev/null 2>&1
-          # 创建固件存储目录
+          
+          # 创建固件存储目录（确保目录存在，避免复制失败）
           mkdir -p ${images_dir}
-          # 循环编译目标设备
+          
+          # 单线程编译（-j1），确保依赖顺序正确，解决"无规则生成目标"问题
           for m in $targets; do 
-            # 🔥 核心修复2：单线程编译（-j1），确保依赖顺序正确，解决"无规则生成目标"
+            echo "开始编译设备：$m"
             fakeroot ./build_firmware_ci $m -j1
-            # 检查编译是否成功
-            if [ $? = 0 ]; then 
-              # 编译成功则复制固件到存储目录
-              cp -f images/*.trx ${images_dir}/$m.trx
-            else 
-              # 编译失败则退出
+            
+            # 检查编译是否成功，失败则退出并提示
+            if [ $? -ne 0 ]; then
+              echo "Error: 设备$m编译失败"
               exit 1
             fi
-            # 再次完整清理缓存，避免残留冲突
+            
+            # 编译成功，复制固件到存储目录
+            cp -f images/*.trx ${images_dir}/${m}.trx
+            echo "设备$m编译成功，固件已复制到${images_dir}"
+            
+            # 再次完整清理缓存，避免影响后续编译（此处仅单设备，仍保留规范）
             ./clear_tree >/dev/null 2>&1
           done
 
