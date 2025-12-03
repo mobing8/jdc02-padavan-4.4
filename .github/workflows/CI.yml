@@ -20,7 +20,7 @@ jobs:
     env:
       build_variant: ${{ matrix.build_variant }}
       targets: ${{ matrix.targets }}
-      images_dir: ./output/images  # 改为工作目录内路径，避免root权限问题
+      images_dir: ./output/images  # 工作目录内路径，避免权限问题
     strategy:
       matrix:
         include:
@@ -29,16 +29,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # 拉取完整历史，避免版本号获取异常
+          fetch-depth: 0  # 拉取完整历史，确保版本号获取正常
           persist-credentials: false
 
       - name: Prepare environment
         run: |
           sudo apt update
-          # 安装基础依赖+新增缺失工具（fakeroot、shellcheck）
+          # 安装所有依赖（含fakeroot、shellcheck、7z等）
           sudo apt install -y libtool-bin gperf python3-docutils autopoint gettext \
           libc6-dev-mipsel-cross gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu \
-          fakeroot shellcheck p7zip-full  # 补充7z依赖（若缺失）
+          fakeroot shellcheck p7zip-full
 
       - name: Run shellcheck
         run: sh ./trunk/tools/shellcheck.sh
@@ -47,7 +47,7 @@ jobs:
         run: |
           cd toolchain-mipsel
           sh dl_toolchain.sh
-          # 将工具链bin目录添加到PATH（根据实际工具链结构调整路径）
+          # 工具链路径添加到PATH（确保交叉编译器可调用）
           echo "PATH=$PATH:$(pwd)/bin" >> $GITHUB_ENV
 
       - name: Setup tmate session
@@ -59,29 +59,38 @@ jobs:
       - name: Start build
         run: |
           cd trunk
-          # 赋予构建/清理脚本执行权限
-          chmod +x ./build_firmware_ci ./clear_tree_simple
+          # 关键：给所有调用的脚本赋予执行权限（含build_firmware_modify）
+          echo "===== 赋予脚本执行权限 ====="
+          chmod +x ./build_firmware_ci ./build_firmware_modify ./clear_tree_simple
+          # 验证权限是否生效
+          ls -l ./build_firmware_ci ./build_firmware_modify ./clear_tree_simple
+
+          # 复制京东云配置文件到构建目录（确保被加载）
+          echo "===== 加载京东云设备配置 ====="
+          cp configs/templates/JDCLOUD-RE-CP-02.config .config
+          ls -l .config  # 确认配置文件已复制
+
           # 确保输出目录存在
           mkdir -p ${images_dir}
-          # 循环构建目标（多行写法便于调试和维护）
+
+          # 循环构建目标
           for m in $targets; do
             echo "===== 开始构建目标：$m ====="
-            # 执行构建（带fakeroot模拟权限）
             fakeroot ./build_firmware_ci $m
-            # 检查构建是否成功
+            # 检查构建结果
             if [ $? -ne 0 ]; then
               echo "❌ 目标 $m 构建失败，终止流程！"
               exit 1
             fi
-            # 检查是否生成.trx固件
+            # 检查固件产物
             trx_files=$(ls images/*.trx 2>/dev/null | wc -l)
             if [ $trx_files -eq 0 ]; then
-              echo "❌ 目标 $m 构建成功，但未找到 images/*.trx 产物！"
+              echo "❌ 目标 $m 未生成.trx固件！"
               exit 1
             fi
             # 复制固件到输出目录
             cp -f images/*.trx ${images_dir}/$m.trx
-            echo "✅ 目标 $m 构建完成，固件已保存至 ${images_dir}/$m.trx"
+            echo "✅ 目标 $m 构建完成，固件路径：${images_dir}/$m.trx"
             # 清理构建残留
             ./clear_tree_simple >/dev/null 2>&1
           done
@@ -89,16 +98,12 @@ jobs:
       - name: Create archive
         if: ${{ github.event_name != 'release' && success() }}
         run: |
-          # 查看输出目录内容（便于调试）
-          ls -lh ${images_dir}
-          # 生成带Git版本的压缩包名称
+          ls -lh ${images_dir}  # 查看输出目录内容
           GIT_VERSION=$(git rev-parse --short=7 HEAD 2>/dev/null)
           image_name="images_${build_variant}_${GIT_VERSION:-default}"
-          # 生成MD5校验并压缩
           cd ${images_dir}
           md5sum *.trx > md5sum.txt
           7z a -mx=9 "${image_name}.7z" ./*
-          # 记录压缩包名称供后续步骤使用
           echo "image_name=${image_name}" >> $GITHUB_ENV
 
       - name: Upload images to Artifact
