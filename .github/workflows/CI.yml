@@ -55,41 +55,11 @@ jobs:
       # 彻底重写的Start build步骤（无语法错误）
       - name: Start build
         run: |
-          # 进入trunk目录，失败则退出
-          cd trunk || { echo "Failed to enter trunk directory"; exit 1; }
-          
-          # 给所有.sh脚本添加可执行权限
-          find . -type f -name "*.sh" -exec chmod +x {} \;
-          
-          # 给核心编译脚本加权限
-          chmod +x build_firmware_ci build_firmware_modify clear_tree clear_tree_simple
-          
-          # 清理编译缓存
-          ./clear_tree >/dev/null 2>&1
-          
-          # 创建固件存储目录
-          mkdir -p "${images_dir}"
-          
-          # 编译目标设备
-          for device in ${targets}; do
-            echo "Building firmware for ${device}"
-            # 执行编译（单线程）
-            fakeroot ./build_firmware_ci "${device}" -j1
-            
-            # 检查编译结果
-            if [ $? -ne 0 ]; then
-              echo "Build failed for ${device}"
-              exit 1
-            fi
-            
-            # 复制固件
-            cp -f images/*.trx "${images_dir}/${device}.trx"
-            echo "Build succeeded for ${device}"
-            
-            # 清理缓存
-            ./clear_tree >/dev/null 2>&1
-          done
-
+          cd trunk
+          mkdir -p ${images_dir}
+          for m in $targets; do fakeroot ./build_firmware_ci $m; \
+          if [ $? = 0 ]; then cp -f images/*.trx ${images_dir}/$m.trx; else exit 1; fi; \
+          ./clear_tree_simple >/dev/null 2>&1; done
       - name: Create archive
         if: ${{ github.event_name != 'release' && success() }}
         run: |
