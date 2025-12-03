@@ -20,7 +20,7 @@ jobs:
     env:
       build_variant: ${{ matrix.build_variant }}
       targets: ${{ matrix.targets }}
-      images_dir: /opt/images
+      images_dir: ./output/images  # 改为工作目录内路径，避免root权限问题
     strategy:
       matrix:
         include:
@@ -29,14 +29,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0  # 拉取完整历史，避免版本号获取异常
           persist-credentials: false
 
       - name: Prepare environment
         run: |
           sudo apt update
+          # 安装基础依赖+新增缺失工具（fakeroot、shellcheck）
           sudo apt install -y libtool-bin gperf python3-docutils autopoint gettext \
-          libc6-dev-mipsel-cross gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu
+          libc6-dev-mipsel-cross gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu \
+          fakeroot shellcheck p7zip-full  # 补充7z依赖（若缺失）
 
       - name: Run shellcheck
         run: sh ./trunk/tools/shellcheck.sh
@@ -45,6 +47,8 @@ jobs:
         run: |
           cd toolchain-mipsel
           sh dl_toolchain.sh
+          # 将工具链bin目录添加到PATH（根据实际工具链结构调整路径）
+          echo "PATH=$PATH:$(pwd)/bin" >> $GITHUB_ENV
 
       - name: Setup tmate session
         uses: mxschmitt/action-tmate@v3
@@ -52,23 +56,49 @@ jobs:
         with:
           limit-access-to-actor: true
 
-      # 彻底重写的Start build步骤（无语法错误）
       - name: Start build
         run: |
           cd trunk
+          # 赋予构建/清理脚本执行权限
+          chmod +x ./build_firmware_ci ./clear_tree_simple
+          # 确保输出目录存在
           mkdir -p ${images_dir}
-          for m in $targets; do fakeroot ./build_firmware_ci $m; \
-          if [ $? = 0 ]; then cp -f images/*.trx ${images_dir}/$m.trx; else exit 1; fi; \
-          ./clear_tree_simple >/dev/null 2>&1; done
+          # 循环构建目标（多行写法便于调试和维护）
+          for m in $targets; do
+            echo "===== 开始构建目标：$m ====="
+            # 执行构建（带fakeroot模拟权限）
+            fakeroot ./build_firmware_ci $m
+            # 检查构建是否成功
+            if [ $? -ne 0 ]; then
+              echo "❌ 目标 $m 构建失败，终止流程！"
+              exit 1
+            fi
+            # 检查是否生成.trx固件
+            trx_files=$(ls images/*.trx 2>/dev/null | wc -l)
+            if [ $trx_files -eq 0 ]; then
+              echo "❌ 目标 $m 构建成功，但未找到 images/*.trx 产物！"
+              exit 1
+            fi
+            # 复制固件到输出目录
+            cp -f images/*.trx ${images_dir}/$m.trx
+            echo "✅ 目标 $m 构建完成，固件已保存至 ${images_dir}/$m.trx"
+            # 清理构建残留
+            ./clear_tree_simple >/dev/null 2>&1
+          done
+
       - name: Create archive
         if: ${{ github.event_name != 'release' && success() }}
         run: |
+          # 查看输出目录内容（便于调试）
           ls -lh ${images_dir}
+          # 生成带Git版本的压缩包名称
           GIT_VERSION=$(git rev-parse --short=7 HEAD 2>/dev/null)
           image_name="images_${build_variant}_${GIT_VERSION:-default}"
+          # 生成MD5校验并压缩
           cd ${images_dir}
           md5sum *.trx > md5sum.txt
           7z a -mx=9 "${image_name}.7z" ./*
+          # 记录压缩包名称供后续步骤使用
           echo "image_name=${image_name}" >> $GITHUB_ENV
 
       - name: Upload images to Artifact
